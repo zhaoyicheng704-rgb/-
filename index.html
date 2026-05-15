@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>阿翘生存模拟器 - 互通版</title>
+  <title>阿翘生存模拟器 - 多人同步正式版</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -13,18 +13,16 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useRef } = React;
+    const { useState, useEffect } = React;
 
-    // 公共全局房间ID
-    const ROOM_ID = "aq-room-2026";
-    const INIT = {
+    const INIT_STATE = {
       nutrition: 72,
       pressure: 38,
       teamFollow: 90,
       score: 85,
       level: 6,
       title: "资源推进者",
-      logs: ["🎮 进入全网联机房间"]
+      logs: ["🎮 进入多人房间"]
     };
 
     const positiveActions = [
@@ -45,63 +43,65 @@
       { icon: "🔥", name: "抢下属功劳", effect: { teamFollow: -15 } },
     ];
 
-    // 公共云端读写
-    async function getCloudState() {
+    // 共用一个固定存储键 + 利用广播同步
+    const KEY = "aq-game-room-20260515";
+
+    function readState() {
       try {
-        const res = await fetch(`https://api.vercel.app/state/${ROOM_ID}`);
-        if (!res.ok) throw 1;
-        return await res.json();
+        const t = localStorage.getItem(KEY);
+        return t ? JSON.parse(t) : { ...INIT_STATE };
       } catch {
-        return INIT;
+        return { ...INIT_STATE };
       }
     }
 
-    async function setCloudState(data) {
-      try {
-        await fetch(`https://api.vercel.app/state/${ROOM_ID}`, {
-          method: "POST",
-          body: JSON.stringify(data)
-        });
-      } catch(e) {}
+    function saveState(s) {
+      localStorage.setItem(KEY, JSON.stringify(s));
+      window.dispatchEvent(new StorageEvent("storage"));
     }
 
-    function App() {
-      const [state, setState] = useState(INIT);
-      const timer = useRef(null);
+    export default function App() {
+      const [state, setState] = useState(readState);
 
-      // 定时拉云端，全局同步
+      // 同设备立刻同步
       useEffect(() => {
-        const load = async () => {
-          const d = await getCloudState();
-          setState(d);
-        };
-        load();
-        timer.current = setInterval(load, 1000);
-        return () => clearInterval(timer.current);
+        const fn = () => setState(readState());
+        window.addEventListener("storage", fn);
+        return () => window.removeEventListener("storage", fn);
       }, []);
 
-      const doAction = async (action) => {
-        const curr = await getCloudState();
-        let nutrition = Math.max(0, Math.min(100, curr.nutrition + (action.effect.nutrition||0)));
-        let pressure = Math.max(0, Math.min(100, curr.pressure + (action.effect.pressure||0)));
-        let teamFollow = Math.max(0, Math.min(100, curr.teamFollow + (action.effect.teamFollow||0)));
+      const calc = (nut, pre, tea) => {
+        let nutrition = Math.max(0, Math.min(100, nut));
+        let pressure = Math.max(0, Math.min(100, pre));
+        let teamFollow = Math.max(0, Math.min(100, tea));
 
         const score = Math.round(nutrition * 0.4 + teamFollow * 0.4 + (100 - pressure) * 0.2);
         let title = "边缘人", level = 1;
         if (score >= 90) { title = "职场天花板"; level = 10; }
         else if (score >= 80) { title = "资源推进者"; level = 8; }
         else if (score >= 60) { title = "骨干员工"; level = 5; }
-
-        const logs = [...curr.logs, `[${new Date().toLocaleTimeString()}] ${action.name}`].slice(-20);
-        const newData = { ...curr, nutrition, pressure, teamFollow, score, level, title, logs };
-        await setCloudState(newData);
-        setState(newData);
+        return { nutrition, pressure, teamFollow, score, level, title };
       };
 
-      const resetRoom = async () => {
-        const resetData = { ...INIT, logs: ["🔄 房间已重置"] };
-        await setCloudState(resetData);
-        setState(resetData);
+      const handleAction = (act) => {
+        const curr = readState();
+        let n = curr.nutrition + (act.effect.nutrition || 0);
+        let p = curr.pressure + (act.effect.pressure || 0);
+        let t = curr.teamFollow + (act.effect.teamFollow || 0);
+
+        const res = calc(n, p, t);
+        const time = new Date().toLocaleTimeString();
+        const logs = [...curr.logs, `[${time}] ${act.name}`].slice(-20);
+
+        const newS = { ...curr, ...res, logs };
+        saveState(newS);
+        setState(newS);
+      };
+
+      const resetAll = () => {
+        const newS = { ...INIT_STATE, logs: ["🔄 房间已重置"] };
+        saveState(newS);
+        setState(newS);
       };
 
       return (
@@ -109,28 +109,26 @@
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
             <div>
               <h1 className="text-3xl font-bold">👨‍💼 阿翘生存模拟器</h1>
-              <p className="text-green-600 mt-1">🌐 全网真正互通 · 所有浏览器手机同步</p>
+              <p className="text-gray-500 mt-1">同浏览器多标签实时同步</p>
             </div>
-            <div className="mt-4 md:mt-0 flex gap-3 items-center">
+            <div className="mt-4 md:mt-0 flex gap-3">
               <div className="bg-blue-100 px-4 py-2 rounded-xl">
                 <div className="text-xs">Lv.{state.level} · {state.title}</div>
                 <div className="text-xl font-bold">{state.score} 分</div>
               </div>
-              <button onClick={resetRoom} className="bg-red-500 text-white px-3 py-2 rounded-xl text-sm hover:bg-red-600">
-                重置房间
-              </button>
+              <button onClick={resetAll} className="bg-red-500 text-white px-3 py-2 rounded-xl text-sm">重置</button>
             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="lg:col-span-3 bg-white rounded-2xl p-5 shadow-sm">
               <div className="flex items-center gap-2 mb-4">
-                <span className="text-green-500 text-xl">🟢</span>
+                <span className="text-green-500">🟢</span>
                 <h2 className="font-semibold">正向事件</h2>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 {positiveActions.map((a,i)=>(
-                  <button key={i} className="bg-gray-50 p-3 rounded-xl hover:bg-green-100 transition" onClick={()=>doAction(a)}>
+                  <button key={i} className="bg-gray-50 p-3 rounded-xl hover:bg-green-100" onClick={()=>handleAction(a)}>
                     <div className="text-2xl mb-1">{a.icon}</div>
                     <div className="text-xs">{a.name}</div>
                   </button>
@@ -143,21 +141,21 @@
               <div className="w-full bg-white rounded-2xl p-6 shadow-sm">
                 <div className="space-y-4">
                   <div>
-                    <div className="flex justify-between text-xs mb-1">💚 营养值 {state.nutrition}</div>
-                    <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-green-400 rounded-full transition-all duration-300" style={{width:`${state.nutrition}%`}}></div>
+                    <div className="flex justify-between text-xs mb-1">💚 营养 {state.nutrition}</div>
+                    <div className="h-3 bg-gray-100 rounded-full">
+                      <div className="h-full bg-green-400 rounded-full transition-all" style={{width:`${state.nutrition}%`}}></div>
                     </div>
                   </div>
                   <div>
-                    <div className="flex justify-between text-xs mb-1">🧡 压力值 {state.pressure}</div>
-                    <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-orange-400 rounded-full transition-all duration-300" style={{width:`${state.pressure}%`}}></div>
+                    <div className="flex justify-between text-xs mb-1">🧡 压力 {state.pressure}</div>
+                    <div className="h-3 bg-gray-100 rounded-full">
+                      <div className="h-full bg-orange-400 rounded-full transition-all" style={{width:`${state.pressure}%`}}></div>
                     </div>
                   </div>
                   <div>
-                    <div className="flex justify-between text-xs mb-1">👥 团队追随 {state.teamFollow}</div>
-                    <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-400 rounded-full transition-all duration-300" style={{width:`${state.teamFollow}%`}}></div>
+                    <div className="flex justify-between text-xs mb-1">👥 追随 {state.teamFollow}</div>
+                    <div className="h-3 bg-gray-100 rounded-full">
+                      <div className="h-full bg-blue-400 rounded-full transition-all" style={{width:`${state.teamFollow}%`}}></div>
                     </div>
                   </div>
                 </div>
@@ -166,12 +164,12 @@
 
             <div className="lg:col-span-3 bg-white rounded-2xl p-5 shadow-sm">
               <div className="flex items-center gap-2 mb-4">
-                <span className="text-red-500 text-xl">🔥</span>
+                <span className="text-red-500">🔥</span>
                 <h2 className="font-semibold">负面事件</h2>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 {negativeActions.map((a,i)=>(
-                  <button key={i} className="bg-gray-50 p-3 rounded-xl hover:bg-red-100 transition" onClick={()=>doAction(a)}>
+                  <button key={i} className="bg-gray-50 p-3 rounded-xl hover:bg-red-100" onClick={()=>handleAction(a)}>
                     <div className="text-2xl mb-1">{a.icon}</div>
                     <div className="text-xs">{a.name}</div>
                   </button>
@@ -181,16 +179,14 @@
           </div>
 
           <div className="mt-6 bg-white rounded-2xl p-5 shadow-sm">
-            <h3 className="font-semibold mb-2">🕒 全局联机日志</h3>
-            <div className="space-y-1 text-sm max-h-52 overflow-y-auto">
-              {state.logs.map((log,i)=>(<div key={i} className="text-gray-700">{log}</div>))}
+            <h3 className="font-semibold mb-2">🕒 操作日志</h3>
+            <div className="space-y-1 text-sm">
+              {state.logs.map((log,i)=>(<div key={i}>{log}</div>))}
             </div>
           </div>
         </div>
       );
     }
-
-    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
   </script>
 </body>
 </html>
