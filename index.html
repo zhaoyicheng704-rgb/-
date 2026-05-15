@@ -3,39 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>阿翘生存模拟器 - 全网联机版</title>
+  <title>阿翘生存模拟器</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-  <!-- Firebase 官方SDK 内置公共库 -->
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
 </head>
 <body class="bg-gray-50 text-gray-800">
   <div id="root"></div>
 
   <script type="text/babel">
     const { useState, useEffect } = React;
-
-    // 初始化公共Firebase（已配置好，你不用改任何东西）
-    const firebaseConfig = {
-      apiKey: "AIzaSyB9s8X9t5X7QaF5gH8Z7X7X7X7X7X7X7X7",
-      authDomain: "public-game-room-db.firebaseapp.com",
-      databaseURL: "https://public-game-room-db-default-rtdb.firebaseio.com",
-      projectId: "public-game-room-db",
-      storageBucket: "public-game-room-db.appspot.com",
-      messagingSenderId: "1234567890",
-      appId: "1:1234567890:web:abc123def456ghi789jkl01"
-    };
-
-    // 初始化 Firebase
-    if (!firebase.apps.length) {
-      firebase.initializeApp(firebaseConfig);
-    }
-    const db = firebase.database();
-    const roomRef = db.ref("aq_game_room_001");
 
     const INIT_STATE = {
       nutrition: 72,
@@ -44,7 +22,7 @@
       score: 85,
       level: 6,
       title: "资源推进者",
-      logs: ["🎮 进入全网联机房间"]
+      logs: ["🎮 进入房间"]
     };
 
     const positiveActions = [
@@ -65,17 +43,29 @@
       { icon: "🔥", name: "抢下属功劳", effect: { teamFollow: -15 } },
     ];
 
-    function App() {
-      const [state, setState] = useState(INIT_STATE);
+    const STORAGE_KEY = "aq_game_room_final";
 
-      // 监听云端数据实时变化
+    function readState() {
+      try {
+        const data = localStorage.getItem(STORAGE_KEY);
+        return data ? JSON.parse(data) : {...INIT_STATE};
+      } catch {
+        return {...INIT_STATE};
+      }
+    }
+
+    function saveState(val) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(val));
+      window.dispatchEvent(new StorageEvent("storage"));
+    }
+
+    function App() {
+      const [state, setState] = useState(readState);
+
       useEffect(() => {
-        roomRef.on("value", (snap) => {
-          const data = snap.val();
-          if (data) setState(data);
-          else roomRef.set(INIT_STATE);
-        });
-        return () => roomRef.off("value");
+        const handler = () => setState(readState());
+        window.addEventListener("storage", handler);
+        return () => window.removeEventListener("storage", handler);
       }, []);
 
       function calcScore(nutrition, pressure, teamFollow) {
@@ -94,24 +84,25 @@
         return { nutrition, pressure, teamFollow, score, level, title };
       }
 
-      async function handleAction(item) {
-        const curr = await roomRef.get();
-        const currData = curr.val() || INIT_STATE;
-
-        let n = currData.nutrition + (item.effect.nutrition || 0);
-        let p = currData.pressure + (item.effect.pressure || 0);
-        let t = currData.teamFollow + (item.effect.teamFollow || 0);
+      function handleAction(item) {
+        const curr = readState();
+        let n = curr.nutrition + (item.effect.nutrition || 0);
+        let p = curr.pressure + (item.effect.pressure || 0);
+        let t = curr.teamFollow + (item.effect.teamFollow || 0);
 
         const res = calcScore(n, p, t);
         const time = new Date().toLocaleTimeString();
-        const newLogs = [...currData.logs, `[${time}] ${item.name}`].slice(-20);
+        const newLogs = [...curr.logs, `[${time}] ${item.name}`].slice(-20);
 
-        const newState = { ...currData, ...res, logs: newLogs };
-        roomRef.set(newState);
+        const newState = {...curr, ...res, logs: newLogs};
+        saveState(newState);
+        setState(newState);
       }
 
       function resetRoom() {
-        roomRef.set({ ...INIT_STATE, logs: ["🔄 房间已重置"] });
+        const newState = {...INIT_STATE, logs: ["🔄 房间已重置"]};
+        saveState(newState);
+        setState(newState);
       }
 
       return (
@@ -119,7 +110,7 @@
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
             <div>
               <h1 className="text-3xl font-bold">👨‍💼 阿翘生存模拟器</h1>
-              <p className="text-green-600 mt-1">🌐 全网真正联机 · 所有设备实时同步</p>
+              <p className="text-gray-500">同浏览器多标签实时同步</p>
             </div>
             <div className="mt-3 md:mt-0 flex gap-3 items-center">
               <div className="bg-blue-100 px-4 py-2 rounded-xl">
@@ -199,7 +190,7 @@
           </div>
 
           <div className="mt-6 bg-white rounded-2xl p-5 shadow-sm">
-            <h3 className="font-semibold mb-2">🕒 全局联机日志（所有人可见）</h3>
+            <h3 className="font-semibold mb-2">🕒 操作日志</h3>
             <div className="space-y-1 text-sm max-h-52 overflow-y-auto">
               {state.logs.map((log, idx) => (
                 <div key={idx} className="text-gray-700">{log}</div>
