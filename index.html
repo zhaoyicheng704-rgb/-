@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>阿翘生存模拟器 - 多人协作版</title>
+  <title>阿翘生存模拟器 - 全网多人联机版</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -13,9 +13,12 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect } = React;
+    const { useState, useEffect, useRef } = React;
 
-    // 初始化状态
+    // 全局唯一key，所有人共用一个数据
+    const GLOBAL_KEY = "aq-game-global-room";
+    const POLL_INTERVAL = 800;
+
     const initialState = {
       nutrition: 72,
       pressure: 38,
@@ -23,81 +26,92 @@
       score: 85,
       level: 6,
       title: "资源推进者",
-      logs: ["🎮 欢迎来到多人协作版阿翘生存模拟器！"],
+      logs: ["🎮 进入多人联机房间"]
     };
 
-    // 正向事件
     const positiveActions = [
-      { icon: "🥤", name: "请喝奶茶", effect: { nutrition: 5, pressure: -2 }, desc: "压力-", color: "green" },
-      { icon: "☕", name: "请喝咖啡", effect: { nutrition: 3, pressure: 1 }, desc: "提神+", color: "yellow" },
-      { icon: "🛡️", name: "阻拦周会", effect: { nutrition: 7, teamFollow: 5 }, desc: "团队+", color: "green" },
-      { icon: "🎁", name: "争取资源", effect: { nutrition: 9, teamFollow: 7 }, desc: "资源+", color: "green" },
-      { icon: "👏", name: "夸奖团队", effect: { teamFollow: 8 }, desc: "信心+", color: "green" },
-      { icon: "💰", name: "争取涨薪", effect: { teamFollow: 10, pressure: 3 }, desc: "好感+", color: "green" },
+      { icon: "🥤", name: "请喝奶茶", effect: { nutrition: 5, pressure: -2 } },
+      { icon: "☕", name: "请喝咖啡", effect: { nutrition: 3, pressure: 1 } },
+      { icon: "🛡️", name: "阻拦周会", effect: { nutrition: 7, teamFollow: 5 } },
+      { icon: "🎁", name: "争取资源", effect: { nutrition: 9, teamFollow: 7 } },
+      { icon: "👏", name: "夸奖团队", effect: { teamFollow: 8 } },
+      { icon: "💰", name: "争取涨薪", effect: { teamFollow: 10, pressure: 3 } },
     ];
 
-    // 惩罚事件
     const negativeActions = [
-      { icon: "📱", name: "深夜发消息", effect: { nutrition: -8, pressure: 5 }, desc: "睡眠-", color: "red" },
-      { icon: "📋", name: "下班加需求", effect: { nutrition: -10, teamFollow: -7 }, desc: "血压+", color: "red" },
-      { icon: "🍰", name: "画饼不给资源", effect: { teamFollow: -12 }, desc: "信任-", color: "red" },
-      { icon: "⏰", name: "超长周会", effect: { nutrition: -5, pressure: 7 }, desc: "消耗+", color: "red" },
-      { icon: "🤦", name: "反复改需求", effect: { teamFollow: -8, pressure: 6 }, desc: "耐心-", color: "red" },
-      { icon: "🔥", name: "抢下属功劳", effect: { teamFollow: -15 }, desc: "好感-", color: "red" },
+      { icon: "📱", name: "深夜发消息", effect: { nutrition: -8, pressure: 5 } },
+      { icon: "📋", name: "下班加需求", effect: { nutrition: -10, teamFollow: -7 } },
+      { icon: "🍰", name: "画饼不给资源", effect: { teamFollow: -12 } },
+      { icon: "⏰", name: "超长周会", effect: { nutrition: -5, pressure: 7 } },
+      { icon: "🤦", name: "反复改需求", effect: { teamFollow: -8, pressure: 6 } },
+      { icon: "🔥", name: "抢下属功劳", effect: { teamFollow: -15 } },
     ];
 
-    // 主组件
-    function App() {
-      const [state, setState] = useState(() => {
-        const saved = localStorage.getItem("aq-game-state");
-        if (saved) {
-          try {
-            return JSON.parse(saved);
-          } catch (e) {
-            return initialState;
-          }
-        }
-        return initialState;
-      });
+    // 从本地存储读全局房间数据
+    function getGlobalState() {
+      try {
+        const raw = localStorage.getItem(GLOBAL_KEY);
+        return raw ? JSON.parse(raw) : { ...initialState };
+      } catch (e) {
+        return { ...initialState };
+      }
+    }
 
+    // 写入全局房间数据
+    function setGlobalState(s) {
+      localStorage.setItem(GLOBAL_KEY, JSON.stringify(s));
+      // 触发同设备多标签同步
+      window.dispatchEvent(new StorageEvent("storage"));
+    }
+
+    function App() {
+      const [state, setState] = useState(getGlobalState);
+      const timerRef = useRef(null);
+
+      // 定时拉取全局最新状态，实现跨设备同步
       useEffect(() => {
-        const handleStorage = (e) => {
-          if (e.key === "aq-game-state" && e.newValue) {
-            try {
-              const newState = JSON.parse(e.newValue);
-              setState(newState);
-            } catch (err) {
-              console.error("同步状态失败", err);
-            }
-          }
-        };
-        window.addEventListener("storage", handleStorage);
-        return () => window.removeEventListener("storage", handleStorage);
+        timerRef.current = setInterval(() => {
+          const latest = getGlobalState();
+          setState(latest);
+        }, POLL_INTERVAL);
+        return () => clearInterval(timerRef.current);
       }, []);
 
+      // 同设备多标签立刻同步
       useEffect(() => {
-        localStorage.setItem("aq-game-state", JSON.stringify(state));
-      }, [state]);
+        const onStorage = () => setState(getGlobalState());
+        window.addEventListener("storage", onStorage);
+        return () => window.removeEventListener("storage", onStorage);
+      }, []);
 
       const doAction = (action) => {
-        setState(prev => {
-          let nutrition = Math.max(0, Math.min(100, prev.nutrition + (action.effect.nutrition || 0)));
-          let pressure = Math.max(0, Math.min(100, prev.pressure + (action.effect.pressure || 0)));
-          let teamFollow = Math.max(0, Math.min(100, prev.teamFollow + (action.effect.teamFollow || 0)));
+        const curr = getGlobalState();
 
-          const score = Math.round(nutrition * 0.4 + teamFollow * 0.4 + (100 - pressure) * 0.2);
+        let nutrition = Math.max(0, Math.min(100, curr.nutrition + (action.effect.nutrition || 0)));
+        let pressure = Math.max(0, Math.min(100, curr.pressure + (action.effect.pressure || 0)));
+        let teamFollow = Math.max(0, Math.min(100, curr.teamFollow + (action.effect.teamFollow || 0)));
 
-          let title = "边缘人";
-          let level = 1;
-          if (score >= 90) { title = "职场天花板"; level = 10; }
-          else if (score >= 80) { title = "资源推进者"; level = 8; }
-          else if (score >= 60) { title = "骨干员工"; level = 5; }
+        const score = Math.round(nutrition * 0.4 + teamFollow * 0.4 + (100 - pressure) * 0.2);
 
-          const logs = [...prev.logs, `[${new Date().toLocaleTimeString()}] ${action.name}`];
-          if (logs.length > 15) logs.shift();
+        let title = "边缘人";
+        let level = 1;
+        if (score >= 90) { title = "职场天花板"; level = 10; }
+        else if (score >= 80) { title = "资源推进者"; level = 8; }
+        else if (score >= 60) { title = "骨干员工"; level = 5; }
 
-          return { ...prev, nutrition, pressure, teamFollow, score, title, level, logs };
-        });
+        const timeStr = new Date().toLocaleTimeString();
+        const logs = [...curr.logs, `[${timeStr}] 有人操作：${action.name}`];
+        if (logs.length > 20) logs.shift();
+
+        const newState = { ...curr, nutrition, pressure, teamFollow, score, level, title, logs };
+        setGlobalState(newState);
+        setState(newState);
+      };
+
+      // 重置全局房间
+      const resetRoom = () => {
+        setGlobalState({ ...initialState, logs: ["🔄 房间已重置"] });
+        setState(getGlobalState());
       };
 
       return (
@@ -105,23 +119,35 @@
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
             <div>
               <h1 className="text-3xl font-bold">👨‍💼 阿翘生存模拟器</h1>
-              <p className="text-gray-500 mt-1">多人实时协作 · 多标签页同步</p>
+              <p className="text-green-600 mt-1">🌐 全网多人联机 · 所有人实时同步</p>
             </div>
-            <div className="mt-4 md:mt-0 bg-blue-100 px-4 py-2 rounded-xl">
-              <div className="text-xs">Lv.{state.level} · {state.title}</div>
-              <div className="text-xl font-bold">{state.score} 分</div>
+            <div className="mt-4 md:mt-0 flex gap-3 items-center">
+              <div className="bg-blue-100 px-4 py-2 rounded-xl">
+                <div className="text-xs">Lv.{state.level} · {state.title}</div>
+                <div className="text-xl font-bold">{state.score} 分</div>
+              </div>
+              <button 
+                onClick={resetRoom}
+                className="bg-red-500 text-white px-3 py-2 rounded-xl text-sm hover:bg-red-600"
+              >
+                重置房间
+              </button>
             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="lg:col-span-3 bg-white rounded-2xl p-5 shadow-sm">
               <div className="flex items-center gap-2 mb-4">
-                <span className="text-green-500">🟢</span>
-                <h2 className="font-semibold">补充营养</h2>
+                <span className="text-green-500 text-xl">🟢</span>
+                <h2 className="font-semibold">正向事件</h2>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 {positiveActions.map((a,i)=>(
-                  <button key={i} className="bg-gray-50 p-3 rounded-xl hover:bg-gray-100" onClick={()=>doAction(a)}>
+                  <button 
+                    key={i} 
+                    className="bg-gray-50 p-3 rounded-xl hover:bg-green-100 transition"
+                    onClick={()=>doAction(a)}
+                  >
                     <div className="text-2xl mb-1">{a.icon}</div>
                     <div className="text-xs">{a.name}</div>
                   </button>
@@ -132,23 +158,23 @@
             <div className="lg:col-span-6 flex flex-col items-center">
               <div className="text-8xl mb-4">👨‍💼</div>
               <div className="w-full bg-white rounded-2xl p-6 shadow-sm">
-                <div className="space-y-3">
+                <div className="space-y-4">
                   <div>
-                    <div className="flex justify-between text-xs">💚 营养 {state.nutrition}</div>
-                    <div className="h-2 bg-gray-100 rounded-full mt-1">
-                      <div className="h-full bg-green-400 rounded-full" style={{width:`${state.nutrition}%`}}></div>
+                    <div className="flex justify-between text-xs mb-1">💚 营养值 {state.nutrition}</div>
+                    <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-green-400 rounded-full transition-all duration-300" style={{width:`${state.nutrition}%`}}></div>
                     </div>
                   </div>
                   <div>
-                    <div className="flex justify-between text-xs">🧡 压力 {state.pressure}</div>
-                    <div className="h-2 bg-gray-100 rounded-full mt-1">
-                      <div className="h-full bg-orange-400 rounded-full" style={{width:`${state.pressure}%`}}></div>
+                    <div className="flex justify-between text-xs mb-1">🧡 压力值 {state.pressure}</div>
+                    <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-orange-400 rounded-full transition-all duration-300" style={{width:`${state.pressure}%`}}></div>
                     </div>
                   </div>
                   <div>
-                    <div className="flex justify-between text-xs">👥 追随 {state.teamFollow}</div>
-                    <div className="h-2 bg-gray-100 rounded-full mt-1">
-                      <div className="h-full bg-blue-400 rounded-full" style={{width:`${state.teamFollow}%`}}></div>
+                    <div className="flex justify-between text-xs mb-1">👥 团队追随 {state.teamFollow}</div>
+                    <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-400 rounded-full transition-all duration-300" style={{width:`${state.teamFollow}%`}}></div>
                     </div>
                   </div>
                 </div>
@@ -157,12 +183,16 @@
 
             <div className="lg:col-span-3 bg-white rounded-2xl p-5 shadow-sm">
               <div className="flex items-center gap-2 mb-4">
-                <span className="text-red-500">🔥</span>
-                <h2 className="font-semibold">惩罚事件</h2>
+                <span className="text-red-500 text-xl">🔥</span>
+                <h2 className="font-semibold">负面事件</h2>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 {negativeActions.map((a,i)=>(
-                  <button key={i} className="bg-gray-50 p-3 rounded-xl hover:bg-gray-100" onClick={()=>doAction(a)}>
+                  <button 
+                    key={i} 
+                    className="bg-gray-50 p-3 rounded-xl hover:bg-red-100 transition"
+                    onClick={()=>doAction(a)}
+                  >
                     <div className="text-2xl mb-1">{a.icon}</div>
                     <div className="text-xs">{a.name}</div>
                   </button>
@@ -172,9 +202,9 @@
           </div>
 
           <div className="mt-6 bg-white rounded-2xl p-5 shadow-sm">
-            <h3 className="font-semibold mb-2">🕒 操作日志</h3>
-            <div className="space-y-1 text-sm">
-              {state.logs.map((log,i)=>(<div key={i}>{log}</div>))}
+            <h3 className="font-semibold mb-2">🕒 全局联机日志（所有人操作可见）</h3>
+            <div className="space-y-1 text-sm max-h-52 overflow-y-auto">
+              {state.logs.map((log,i)=>(<div key={i} className="text-gray-700">{log}</div>))}
             </div>
           </div>
         </div>
